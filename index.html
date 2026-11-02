@@ -234,8 +234,8 @@ h1,h2,h3,.display{font-family:'Playfair Display',serif; font-weight:600; letter-
       <div class="card appt-card">
         <div>
           <div class="lbl">Próxima consulta</div>
-          <div class="when">Qui, 24 Set · 15:00</div>
-          <div class="sub">Troca para etapa 12 · <span id="nameDoctorAppt">Dra. Mirna Liz</span></div>
+          <div class="when" id="apptWhen">Sem consulta agendada</div>
+          <div class="sub"><span id="apptSubStage">Troca para etapa 12</span> · <span id="nameDoctorAppt">Dra. Mirna Liz</span></div>
         </div>
         <button class="btn-ghost" onclick="openScreen('appt')">Ver</button>
       </div>
@@ -355,11 +355,17 @@ h1,h2,h3,.display{font-family:'Playfair Display',serif; font-weight:600; letter-
     <div class="scroll" style="padding-top:6px">
       <div class="hero-img img-consultorio" style="border-radius:16px"></div>
       <div class="detail-body" style="padding:20px 0">
-        <h2>Troca para etapa 12</h2>
-        <p>Quinta-feira, 24 de setembro às 15:00 com <span id="nameDoctorApptDetail">a Dra. Mirna Liz</span>, unidade Setor Bueno. Traga o alinhador da etapa 11 para revisão.</p>
+        <h2 id="apptTitle">Troca para etapa 12</h2>
+        <p id="apptText">Quinta-feira, 24 de setembro às 15:00 com <span id="nameDoctorApptDetail">a Dra. Mirna Liz</span>, unidade Setor Bueno. Traga o alinhador da etapa 11 para revisão.</p>
         <span class="chip">30 min</span><span class="chip">Setor Bueno</span>
         <button class="cta" onclick="close_()">Confirmar presença</button>
-        <button class="cta secondary" onclick="close_()">Reagendar</button>
+        <button class="cta secondary" onclick="toggleApptForm()">Agendar / reagendar</button>
+        <div id="apptForm" class="card" style="display:none;margin-top:12px">
+          <div class="input-group"><label>Data</label><input type="date" id="apptDate"></div>
+          <div class="input-group"><label>Hora</label><input type="time" id="apptTime"></div>
+          <div class="input-group"><label>Motivo (opcional)</label><input type="text" id="apptNote" placeholder="Ex.: troca para etapa 12"></div>
+          <button class="cta" style="margin-top:6px" onclick="saveAppt()">Salvar agendamento</button>
+        </div>
       </div>
     </div>
   </div>
@@ -388,30 +394,19 @@ h1,h2,h3,.display{font-family:'Playfair Display',serif; font-weight:600; letter-
 </div>
 
 <script>
-/* ====== SUPABASE ======
-   Já preenchido com o seu projeto. Se um dia trocar de projeto,
-   é só atualizar essas duas linhas.
-
-   Se você AINDA NÃO criou a tabela profiles, rode isso (uma vez só):
-
-   create table profiles (
+/* ====== SUPABASE ====== (SQL Editor, uma vez só)
+   create table if not exists profiles (
      id uuid references auth.users primary key,
-     patient_name text,
-     doctor_name text default 'Dra. Mirna Liz',
-     total_stages int default 24,
-     current_stage int default 1
+     patient_name text, doctor_name text default 'Dra. Mirna Liz',
+     total_stages int default 24, current_stage int default 1,
+     appt_date date, appt_time text, appt_note text
    );
    alter table profiles enable row level security;
    create policy "Users manage own profile" on profiles
      for all using (auth.uid() = id) with check (auth.uid() = id);
-
-   Se você JÁ criou a tabela antes (sem as colunas de etapas), rode só isso:
-
-   alter table profiles add column if not exists total_stages int default 24;
-   alter table profiles add column if not exists current_stage int default 1;
 ================================ */
-const SUPABASE_URL = 'https://tgsyfhecpbsprcnzhdmt.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_RFfd6QKw6rZZXGpcEo7gHA_DKOU5zXL';
+const SUPABASE_URL = 'https://nhelmiwhnejuvjcrunve.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_LfHe_wN1D1-ImBnqvdzzXQ_TktcUZC9';
 let supa = null;
 function initSupabase(){
   if(!window.supabase) return null;
@@ -478,6 +473,7 @@ async function loadProfileAndEnter(client, userId){
       doctor = data.doctor_name || doctor;
       STATE.totalStages = data.total_stages || 24;
       STATE.currentStage = data.current_stage || 1;
+      STATE.apptDate = data.appt_date || null; STATE.apptTime = data.appt_time || ''; STATE.apptNote = data.appt_note || '';
     }
   }catch(e){}
   document.getElementById('nameHome').textContent = patient;
@@ -511,7 +507,7 @@ function renderStageProgress(){
       list.appendChild(card);
     }
   }
-  renderWear();
+  renderWear(); renderAppt();
 }
 
 function openStageDetail(n){
@@ -675,6 +671,36 @@ function renderWear(){
   set('homeWearTxt',hm(s)); set('homeWearSub',plate+' · '+(left?'faltam '+hm(left):'meta de 20h atingida'));
   ['timerRing','homeRing'].forEach(id=>{ const e=$(id); if(e) e.setAttribute('stroke-dasharray',pct.toFixed(1)+',100'); });
   renderBars();
+}
+function renderAppt(){
+  const doc=($('nameDoctor').textContent||'').trim()||'Dra. Mirna Liz';
+  const docP=/^dra/i.test(doc)?'a '+doc:(/^dr/i.test(doc)?'o '+doc:doc);
+  const title=STATE.apptNote||('Troca para etapa '+Math.min(STATE.currentStage+1,STATE.totalStages));
+  let when='Sem consulta agendada', long='Nenhuma consulta agendada ainda. Toque em "Agendar / reagendar" para marcar.';
+  if(STATE.apptDate){
+    const d=new Date(STATE.apptDate+'T'+(STATE.apptTime||'00:00'));
+    const sh=d.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\./g,'');
+    when=sh.charAt(0).toUpperCase()+sh.slice(1)+(STATE.apptTime?' · '+STATE.apptTime:'');
+    long=d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})+(STATE.apptTime?' às '+STATE.apptTime:'')+' com ';
+  }
+  $('apptWhen').textContent=when; $('apptSubStage').textContent=title; $('apptTitle').textContent=title;
+  const p=$('apptText'); p.textContent=long;
+  const sp=document.createElement('span'); sp.id='nameDoctorApptDetail'; sp.textContent=docP; if(!STATE.apptDate) sp.style.display='none';
+  p.appendChild(sp);
+  if(STATE.apptDate) p.appendChild(document.createTextNode(', unidade Setor Bueno. Traga o alinhador da etapa '+STATE.currentStage+' para revisão.'));
+}
+function toggleApptForm(){
+  const f=$('apptForm'), show=f.style.display==='none'; f.style.display=show?'block':'none';
+  if(show){ $('apptDate').value=STATE.apptDate||''; $('apptTime').value=STATE.apptTime||''; $('apptNote').value=STATE.apptNote||''; }
+}
+async function saveAppt(){
+  const d=$('apptDate').value, t=$('apptTime').value, n=$('apptNote').value.trim();
+  if(!d){ alert('Escolha a data da consulta.'); return; }
+  STATE.apptDate=d; STATE.apptTime=t||''; STATE.apptNote=n;
+  renderAppt(); $('apptForm').style.display='none';
+  const client=initSupabase();
+  if(client){ try{ const {data:{session}}=await client.auth.getSession();
+    if(session){ const {error}=await client.from('profiles').upsert({id:session.user.id,appt_date:d,appt_time:t||null,appt_note:n||null}); if(error) alert('Salvou na tela, mas não no servidor: '+error.message); } }catch(e){} }
 }
 setInterval(()=>{ rollDay(); renderWear(); },1000);
 renderWear();
